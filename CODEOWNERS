@@ -224,6 +224,7 @@ homeassistant/components/iammeter/* @lewei50
 homeassistant/components/iaqualink/* @flz
 homeassistant/components/icloud/* @Quentame @nzapponi
 homeassistant/components/ign_sismologia/* @exxamalte
+homeassistant/components/ihc/* @dingusdk
 homeassistant/components/image/* @home-assistant/core
 homeassistant/components/incomfort/* @zxdavb
 homeassistant/components/influxdb/* @fabaff @mdegat01

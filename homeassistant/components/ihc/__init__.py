@@ -1,108 +1,41 @@
 """Support for IHC devices."""
+import asyncio
 import logging
-import os.path
 
-from defusedxml import ElementTree
 from ihcsdk.ihccontroller import IHCController
 import voluptuous as vol
 
-from homeassistant.components.binary_sensor import DEVICE_CLASSES_SCHEMA
-from homeassistant.config import load_yaml_config_file
-from homeassistant.const import (
-    CONF_ID,
-    CONF_NAME,
-    CONF_PASSWORD,
-    CONF_TYPE,
-    CONF_UNIT_OF_MEASUREMENT,
-    CONF_URL,
-    CONF_USERNAME,
-    TEMP_CELSIUS,
-)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import discovery
+from homeassistant.helpers import device_registry as dr
 import homeassistant.helpers.config_validation as cv
 
+from .auto_setup import autosetup_ihc_products
 from .const import (
-    ATTR_CONTROLLER_ID,
-    ATTR_IHC_ID,
-    ATTR_VALUE,
     CONF_AUTOSETUP,
     CONF_BINARY_SENSOR,
-    CONF_DIMMABLE,
     CONF_INFO,
-    CONF_INVERTING,
     CONF_LIGHT,
-    CONF_NODE,
-    CONF_NOTE,
-    CONF_OFF_ID,
-    CONF_ON_ID,
-    CONF_POSITION,
     CONF_SENSOR,
     CONF_SWITCH,
-    CONF_XPATH,
-    SERVICE_PULSE,
-    SERVICE_SET_RUNTIME_VALUE_BOOL,
-    SERVICE_SET_RUNTIME_VALUE_FLOAT,
-    SERVICE_SET_RUNTIME_VALUE_INT,
+    CONF_USE_GROUPS,
+    DOMAIN,
+    IHC_CONTROLLER,
+    IHC_PLATFORMS,
 )
-from .util import async_pulse
+from .manual_setup import (
+    BINARY_SENSOR_SCHEMA,
+    LIGHT_SCHEMA,
+    SENSOR_SCHEMA,
+    SWITCH_SCHEMA,
+    manual_setup,
+    validate_name,
+)
+from .migrate import migrate_configuration
+from .service_functions import setup_service_functions
 
 _LOGGER = logging.getLogger(__name__)
-
-AUTO_SETUP_YAML = "ihc_auto_setup.yaml"
-
-DOMAIN = "ihc"
-
-IHC_CONTROLLER = "controller"
-IHC_INFO = "info"
-PLATFORMS = ("binary_sensor", "light", "sensor", "switch")
-
-
-def validate_name(config):
-    """Validate the device name."""
-    if CONF_NAME in config:
-        return config
-    ihcid = config[CONF_ID]
-    name = f"ihc_{ihcid}"
-    config[CONF_NAME] = name
-    return config
-
-
-DEVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_ID): cv.positive_int,
-        vol.Optional(CONF_NAME): cv.string,
-        vol.Optional(CONF_NOTE): cv.string,
-        vol.Optional(CONF_POSITION): cv.string,
-    }
-)
-
-
-SWITCH_SCHEMA = DEVICE_SCHEMA.extend(
-    {
-        vol.Optional(CONF_OFF_ID, default=0): cv.positive_int,
-        vol.Optional(CONF_ON_ID, default=0): cv.positive_int,
-    }
-)
-
-BINARY_SENSOR_SCHEMA = DEVICE_SCHEMA.extend(
-    {
-        vol.Optional(CONF_INVERTING, default=False): cv.boolean,
-        vol.Optional(CONF_TYPE): DEVICE_CLASSES_SCHEMA,
-    }
-)
-
-LIGHT_SCHEMA = DEVICE_SCHEMA.extend(
-    {
-        vol.Optional(CONF_DIMMABLE, default=False): cv.boolean,
-        vol.Optional(CONF_OFF_ID, default=0): cv.positive_int,
-        vol.Optional(CONF_ON_ID, default=0): cv.positive_int,
-    }
-)
-
-SENSOR_SCHEMA = DEVICE_SCHEMA.extend(
-    {vol.Optional(CONF_UNIT_OF_MEASUREMENT, default=TEMP_CELSIUS): cv.string}
-)
 
 IHC_SCHEMA = vol.Schema(
     {
@@ -131,269 +64,109 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-AUTO_SETUP_SCHEMA = vol.Schema(
-    {
-        vol.Optional(CONF_BINARY_SENSOR, default=[]): vol.All(
-            cv.ensure_list,
-            [
-                vol.All(
-                    {
-                        vol.Required(CONF_NODE): cv.string,
-                        vol.Required(CONF_XPATH): cv.string,
-                        vol.Optional(CONF_INVERTING, default=False): cv.boolean,
-                        vol.Optional(CONF_TYPE): cv.string,
-                    }
-                )
-            ],
-        ),
-        vol.Optional(CONF_LIGHT, default=[]): vol.All(
-            cv.ensure_list,
-            [
-                vol.All(
-                    {
-                        vol.Required(CONF_NODE): cv.string,
-                        vol.Required(CONF_XPATH): cv.string,
-                        vol.Optional(CONF_DIMMABLE, default=False): cv.boolean,
-                    }
-                )
-            ],
-        ),
-        vol.Optional(CONF_SENSOR, default=[]): vol.All(
-            cv.ensure_list,
-            [
-                vol.All(
-                    {
-                        vol.Required(CONF_NODE): cv.string,
-                        vol.Required(CONF_XPATH): cv.string,
-                        vol.Optional(
-                            CONF_UNIT_OF_MEASUREMENT, default=TEMP_CELSIUS
-                        ): cv.string,
-                    }
-                )
-            ],
-        ),
-        vol.Optional(CONF_SWITCH, default=[]): vol.All(
-            cv.ensure_list,
-            [
-                vol.All(
-                    {
-                        vol.Required(CONF_NODE): cv.string,
-                        vol.Required(CONF_XPATH): cv.string,
-                    }
-                )
-            ],
-        ),
-    }
-)
-
-SET_RUNTIME_VALUE_BOOL_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IHC_ID): cv.positive_int,
-        vol.Required(ATTR_VALUE): cv.boolean,
-        vol.Optional(ATTR_CONTROLLER_ID, default=0): cv.positive_int,
-    }
-)
-
-SET_RUNTIME_VALUE_INT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IHC_ID): cv.positive_int,
-        vol.Required(ATTR_VALUE): vol.Coerce(int),
-        vol.Optional(ATTR_CONTROLLER_ID, default=0): cv.positive_int,
-    }
-)
-
-SET_RUNTIME_VALUE_FLOAT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IHC_ID): cv.positive_int,
-        vol.Required(ATTR_VALUE): vol.Coerce(float),
-        vol.Optional(ATTR_CONTROLLER_ID, default=0): cv.positive_int,
-    }
-)
-
-PULSE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IHC_ID): cv.positive_int,
-        vol.Optional(ATTR_CONTROLLER_ID, default=0): cv.positive_int,
-    }
-)
-
-
-def setup(hass, config):
+def setup(hass: HomeAssistant, config):
     """Set up the IHC integration."""
     conf = config.get(DOMAIN)
-    for index, controller_conf in enumerate(conf):
-        if not ihc_setup(hass, config, controller_conf, index):
-            return False
+    if conf is not None:
+        _LOGGER.error(
+            """
+            Setup of the IHC controller in configuration.yaml is no longer
+            supported. See https://www.home-assistant.io/integrations/ihc/
+            """
+        )
+        migrate_configuration(hass)
+        return False
 
+    setup_service_functions(hass)
     return True
 
 
-def ihc_setup(hass, config, conf, controller_id):
-    """Set up the IHC integration."""
-    url = conf[CONF_URL]
-    username = conf[CONF_USERNAME]
-    password = conf[CONF_PASSWORD]
-
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Set up the IHC Controller from a config entry."""
+    controller_id = entry.unique_id
+    url = entry.data[CONF_URL]
+    username = entry.data[CONF_USERNAME]
+    password = entry.data[CONF_PASSWORD]
+    autosetup = entry.data[CONF_AUTOSETUP]
+    use_groups = entry.data[CONF_USE_GROUPS] if CONF_USE_GROUPS in entry.data else False
+    info = get_options_value(entry, CONF_INFO, True)
     ihc_controller = IHCController(url, username, password)
-    if not ihc_controller.authenticate():
+    if not await hass.async_add_executor_job(ihc_controller.authenticate):
         _LOGGER.error("Unable to authenticate on IHC controller")
         return False
-
-    if conf[CONF_AUTOSETUP] and not autosetup_ihc_products(
-        hass, config, ihc_controller, controller_id
-    ):
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][controller_id] = {
+        IHC_CONTROLLER: ihc_controller,
+        CONF_INFO: info,
+    }
+    if not await setup_controller_device(hass, ihc_controller, entry):
         return False
-    # Manual configuration
-    get_manual_configuration(hass, config, conf, ihc_controller, controller_id)
-    # Store controller configuration
-    ihc_key = f"ihc{controller_id}"
-    hass.data[ihc_key] = {IHC_CONTROLLER: ihc_controller, IHC_INFO: conf[CONF_INFO]}
-    # We only want to register the service functions once for the first controller
-    if controller_id == 0:
-        setup_service_functions(hass)
+    if autosetup:
+        await hass.async_add_executor_job(
+            autosetup_ihc_products, hass, ihc_controller, controller_id, use_groups
+        )
+    await hass.async_add_executor_job(manual_setup, hass, controller_id)
+    for component in IHC_PLATFORMS:
+        hass.async_create_task(
+            hass.config_entries.async_forward_entry_setup(entry, component)
+        )
+    entry.add_update_listener(async_update_options)
     return True
 
 
-def get_manual_configuration(hass, config, conf, ihc_controller, controller_id):
-    """Get manual configuration for IHC devices."""
-    for platform in PLATFORMS:
-        discovery_info = {}
-        if platform in conf:
-            platform_setup = conf.get(platform)
-            for sensor_cfg in platform_setup:
-                name = sensor_cfg[CONF_NAME]
-                device = {
-                    "ihc_id": sensor_cfg[CONF_ID],
-                    "ctrl_id": controller_id,
-                    "product": {
-                        "name": name,
-                        "note": sensor_cfg.get(CONF_NOTE) or "",
-                        "position": sensor_cfg.get(CONF_POSITION) or "",
-                    },
-                    "product_cfg": {
-                        "type": sensor_cfg.get(CONF_TYPE),
-                        "inverting": sensor_cfg.get(CONF_INVERTING),
-                        "off_id": sensor_cfg.get(CONF_OFF_ID),
-                        "on_id": sensor_cfg.get(CONF_ON_ID),
-                        "dimmable": sensor_cfg.get(CONF_DIMMABLE),
-                        "unit_of_measurement": sensor_cfg.get(CONF_UNIT_OF_MEASUREMENT),
-                    },
-                }
-                discovery_info[name] = device
-        if discovery_info:
-            discovery.load_platform(hass, platform, DOMAIN, discovery_info, config)
-
-
-def autosetup_ihc_products(hass: HomeAssistant, config, ihc_controller, controller_id):
-    """Auto setup of IHC products from the IHC project file."""
-    project_xml = ihc_controller.get_project()
-    if not project_xml:
-        _LOGGER.error("Unable to read project from IHC controller")
+async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
+    """Unload a config entry."""
+    unload_ok = all(
+        await asyncio.gather(
+            *[
+                hass.config_entries.async_forward_entry_unload(config_entry, component)
+                for component in IHC_PLATFORMS
+            ]
+        )
+    )
+    if not unload_ok:
         return False
-    project = ElementTree.fromstring(project_xml)
-
-    # If an auto setup file exist in the configuration it will override
-    yaml_path = hass.config.path(AUTO_SETUP_YAML)
-    if not os.path.isfile(yaml_path):
-        yaml_path = os.path.join(os.path.dirname(__file__), AUTO_SETUP_YAML)
-    yaml = load_yaml_config_file(yaml_path)
-    try:
-        auto_setup_conf = AUTO_SETUP_SCHEMA(yaml)
-    except vol.Invalid as exception:
-        _LOGGER.error("Invalid IHC auto setup data: %s", exception)
-        return False
-
-    groups = project.findall(".//group")
-    for platform in PLATFORMS:
-        platform_setup = auto_setup_conf[platform]
-        discovery_info = get_discovery_info(platform_setup, groups, controller_id)
-        if discovery_info:
-            discovery.load_platform(hass, platform, DOMAIN, discovery_info, config)
-
+    controller_id = config_entry.unique_id
+    ihc_controller = hass.data[DOMAIN][controller_id][IHC_CONTROLLER]
+    ihc_controller.disconnect()
+    hass.data[DOMAIN].pop(controller_id)
+    if hass.data[DOMAIN]:
+        hass.data.pop(DOMAIN)
     return True
 
 
-def get_discovery_info(platform_setup, groups, controller_id):
-    """Get discovery info for specified IHC platform."""
-    discovery_data = {}
-    for group in groups:
-        groupname = group.attrib["name"]
-        for product_cfg in platform_setup:
-            products = group.findall(product_cfg[CONF_XPATH])
-            for product in products:
-                nodes = product.findall(product_cfg[CONF_NODE])
-                for node in nodes:
-                    if "setting" in node.attrib and node.attrib["setting"] == "yes":
-                        continue
-                    ihc_id = int(node.attrib["id"].strip("_"), 0)
-                    name = f"{groupname}_{ihc_id}"
-                    device = {
-                        "ihc_id": ihc_id,
-                        "ctrl_id": controller_id,
-                        "product": {
-                            "name": product.get("name") or "",
-                            "note": product.get("note") or "",
-                            "position": product.get("position") or "",
-                        },
-                        "product_cfg": product_cfg,
-                    }
-                    discovery_data[name] = device
-    return discovery_data
+async def async_update_options(hass: HomeAssistant, config_entry: ConfigEntry):
+    """Update options."""
+    await hass.config_entries.async_reload(config_entry.entry_id)
 
 
-def setup_service_functions(hass: HomeAssistant):
-    """Set up the IHC service functions."""
+def get_options_value(config_entry, key, default):
+    """Get an options value and fall back to a default."""
+    if config_entry.options:
+        return config_entry.options.get(key, default)
+    return default
 
-    def _get_controller(call):
-        controller_id = call.data[ATTR_CONTROLLER_ID]
-        ihc_key = f"ihc{controller_id}"
-        return hass.data[ihc_key][IHC_CONTROLLER]
 
-    def set_runtime_value_bool(call):
-        """Set a IHC runtime bool value service function."""
-        ihc_id = call.data[ATTR_IHC_ID]
-        value = call.data[ATTR_VALUE]
-        ihc_controller = _get_controller(call)
-        ihc_controller.set_runtime_value_bool(ihc_id, value)
-
-    def set_runtime_value_int(call):
-        """Set a IHC runtime integer value service function."""
-        ihc_id = call.data[ATTR_IHC_ID]
-        value = call.data[ATTR_VALUE]
-        ihc_controller = _get_controller(call)
-        ihc_controller.set_runtime_value_int(ihc_id, value)
-
-    def set_runtime_value_float(call):
-        """Set a IHC runtime float value service function."""
-        ihc_id = call.data[ATTR_IHC_ID]
-        value = call.data[ATTR_VALUE]
-        ihc_controller = _get_controller(call)
-        ihc_controller.set_runtime_value_float(ihc_id, value)
-
-    async def async_pulse_runtime_input(call):
-        """Pulse a IHC controller input function."""
-        ihc_id = call.data[ATTR_IHC_ID]
-        ihc_controller = _get_controller(call)
-        await async_pulse(hass, ihc_controller, ihc_id)
-
-    hass.services.register(
-        DOMAIN,
-        SERVICE_SET_RUNTIME_VALUE_BOOL,
-        set_runtime_value_bool,
-        schema=SET_RUNTIME_VALUE_BOOL_SCHEMA,
+async def setup_controller_device(
+    hass: HomeAssistant, ihc_controller, entry: ConfigEntry
+):
+    """Register the IHC controller as a Home Assistant device."""
+    # We must have a controller id, and cast the unique_id to a string.
+    # we know it is not None because it will always be set to the controller serial during setup
+    controller_id: str = str(entry.unique_id)
+    system_info = await hass.async_add_executor_job(
+        ihc_controller.client.get_system_info
     )
-    hass.services.register(
-        DOMAIN,
-        SERVICE_SET_RUNTIME_VALUE_INT,
-        set_runtime_value_int,
-        schema=SET_RUNTIME_VALUE_INT_SCHEMA,
+    if not system_info:
+        _LOGGER.error("Unable to get system information from IHC controller")
+        return False
+    device_registry = await dr.async_get_registry(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, controller_id)},
+        name=system_info["serial_number"],
+        manufacturer="Schneider Electric",
+        model=f"{system_info['brand']} {system_info['hw_revision']}",
+        sw_version=system_info["version"],
     )
-    hass.services.register(
-        DOMAIN,
-        SERVICE_SET_RUNTIME_VALUE_FLOAT,
-        set_runtime_value_float,
-        schema=SET_RUNTIME_VALUE_FLOAT_SCHEMA,
-    )
-    hass.services.register(
-        DOMAIN, SERVICE_PULSE, async_pulse_runtime_input, schema=PULSE_SCHEMA
-    )
+    return True

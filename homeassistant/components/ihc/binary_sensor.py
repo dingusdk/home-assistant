@@ -2,37 +2,32 @@
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.const import CONF_TYPE
 
-from . import IHC_CONTROLLER, IHC_INFO
-from .const import CONF_INVERTING
+from .const import CONF_INVERTING, DOMAIN, IHC_CONTROLLER
 from .ihcdevice import IHCDevice
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Set up the IHC binary sensor platform."""
-    if discovery_info is None:
-        return
-    devices = []
-    for name, device in discovery_info.items():
-        ihc_id = device["ihc_id"]
-        product_cfg = device["product_cfg"]
-        product = device["product"]
-        # Find controller that corresponds with device id
-        ctrl_id = device["ctrl_id"]
-        ihc_key = f"ihc{ctrl_id}"
-        info = hass.data[ihc_key][IHC_INFO]
-        ihc_controller = hass.data[ihc_key][IHC_CONTROLLER]
-
-        sensor = IHCBinarySensor(
-            ihc_controller,
-            name,
-            ihc_id,
-            info,
-            product_cfg.get(CONF_TYPE),
-            product_cfg[CONF_INVERTING],
-            product,
-        )
-        devices.append(sensor)
-    add_entities(devices)
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Load IHC switches based on a config entry."""
+    controller_id = config_entry.unique_id
+    data = hass.data[DOMAIN][controller_id]
+    ihc_controller = data[IHC_CONTROLLER]
+    sensors = []
+    if "binary_sensor" in data and data["binary_sensor"]:
+        for name, device in data["binary_sensor"].items():
+            ihc_id = device["ihc_id"]
+            product_cfg = device["product_cfg"]
+            product = device["product"]
+            sensor = IHCBinarySensor(
+                ihc_controller,
+                controller_id,
+                name,
+                ihc_id,
+                product_cfg.get(CONF_TYPE),
+                product_cfg[CONF_INVERTING],
+                product,
+            )
+            sensors.append(sensor)
+        async_add_entities(sensors)
 
 
 class IHCBinarySensor(IHCDevice, BinarySensorEntity):
@@ -45,15 +40,15 @@ class IHCBinarySensor(IHCDevice, BinarySensorEntity):
     def __init__(
         self,
         ihc_controller,
+        controller_id,
         name,
         ihc_id: int,
-        info: bool,
         sensor_type: str,
         inverting: bool,
         product=None,
     ) -> None:
         """Initialize the IHC binary sensor."""
-        super().__init__(ihc_controller, name, ihc_id, info, product)
+        super().__init__(ihc_controller, controller_id, name, ihc_id, product)
         self._state = None
         self._sensor_type = sensor_type
         self.inverting = inverting
