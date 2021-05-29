@@ -465,6 +465,9 @@ icmplib==2.1.1
 # homeassistant.components.network
 ifaddr==0.1.7
 
+# homeassistant.components.ihc
+ihcsdk==2.7.4
+
 # homeassistant.components.influxdb
 influxdb-client==1.14.0
 
