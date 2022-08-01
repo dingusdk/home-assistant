@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import tikteck
 import voluptuous as vol
@@ -10,8 +11,7 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_HS_COLOR,
     PLATFORM_SCHEMA,
-    SUPPORT_BRIGHTNESS,
-    SUPPORT_COLOR,
+    ColorMode,
     LightEntity,
 )
 from homeassistant.const import CONF_DEVICES, CONF_NAME, CONF_PASSWORD
@@ -22,8 +22,6 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.color as color_util
 
 _LOGGER = logging.getLogger(__name__)
-
-SUPPORT_TIKTECK_LED = SUPPORT_BRIGHTNESS | SUPPORT_COLOR
 
 DEVICE_SCHEMA = vol.Schema(
     {vol.Optional(CONF_NAME): cv.string, vol.Required(CONF_PASSWORD): cv.string}
@@ -56,6 +54,9 @@ def setup_platform(
 
 class TikteckLight(LightEntity):
     """Representation of a Tikteck light."""
+
+    _attr_color_mode = ColorMode.HS
+    _attr_supported_color_modes = {ColorMode.HS}
 
     def __init__(self, device):
         """Initialize the light."""
@@ -98,11 +99,6 @@ class TikteckLight(LightEntity):
         return self._hs
 
     @property
-    def supported_features(self):
-        """Flag supported features."""
-        return SUPPORT_TIKTECK_LED
-
-    @property
     def should_poll(self):
         """Return the polling state."""
         return False
@@ -116,7 +112,7 @@ class TikteckLight(LightEntity):
         """Set the bulb state."""
         return self._bulb.set_state(red, green, blue, brightness)
 
-    def turn_on(self, **kwargs):
+    def turn_on(self, **kwargs: Any) -> None:
         """Turn the specified light on."""
         self._state = True
 
@@ -133,7 +129,7 @@ class TikteckLight(LightEntity):
         self.set_state(rgb[0], rgb[1], rgb[2], self.brightness)
         self.schedule_update_ha_state()
 
-    def turn_off(self, **kwargs):
+    def turn_off(self, **kwargs: Any) -> None:
         """Turn the specified light off."""
         self._state = False
         self.set_state(0, 0, 0, 0)

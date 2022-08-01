@@ -7,10 +7,14 @@ from datetime import timedelta
 import logging
 
 import requests
-from spotipy import Spotify, SpotifyException
+from spotipy import SpotifyException
 from yarl import URL
 
-from homeassistant.components.media_player import BrowseMedia, MediaPlayerEntity
+from homeassistant.components.media_player import (
+    BrowseMedia,
+    MediaPlayerEntity,
+    MediaPlayerEntityFeature,
+)
 from homeassistant.components.media_player.const import (
     MEDIA_TYPE_EPISODE,
     MEDIA_TYPE_MUSIC,
@@ -19,17 +23,6 @@ from homeassistant.components.media_player.const import (
     REPEAT_MODE_ALL,
     REPEAT_MODE_OFF,
     REPEAT_MODE_ONE,
-    SUPPORT_BROWSE_MEDIA,
-    SUPPORT_NEXT_TRACK,
-    SUPPORT_PAUSE,
-    SUPPORT_PLAY,
-    SUPPORT_PLAY_MEDIA,
-    SUPPORT_PREVIOUS_TRACK,
-    SUPPORT_REPEAT_SET,
-    SUPPORT_SEEK,
-    SUPPORT_SELECT_SOURCE,
-    SUPPORT_SHUFFLE_SET,
-    SUPPORT_VOLUME_SET,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ID, STATE_IDLE, STATE_PAUSED, STATE_PLAYING
@@ -47,20 +40,20 @@ from .util import fetch_image_url
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = timedelta(seconds=30)
+SCAN_INTERVAL = timedelta(minutes=1)
 
 SUPPORT_SPOTIFY = (
-    SUPPORT_BROWSE_MEDIA
-    | SUPPORT_NEXT_TRACK
-    | SUPPORT_PAUSE
-    | SUPPORT_PLAY
-    | SUPPORT_PLAY_MEDIA
-    | SUPPORT_PREVIOUS_TRACK
-    | SUPPORT_REPEAT_SET
-    | SUPPORT_SEEK
-    | SUPPORT_SELECT_SOURCE
-    | SUPPORT_SHUFFLE_SET
-    | SUPPORT_VOLUME_SET
+    MediaPlayerEntityFeature.BROWSE_MEDIA
+    | MediaPlayerEntityFeature.NEXT_TRACK
+    | MediaPlayerEntityFeature.PAUSE
+    | MediaPlayerEntityFeature.PLAY
+    | MediaPlayerEntityFeature.PLAY_MEDIA
+    | MediaPlayerEntityFeature.PREVIOUS_TRACK
+    | MediaPlayerEntityFeature.REPEAT_SET
+    | MediaPlayerEntityFeature.SEEK
+    | MediaPlayerEntityFeature.SELECT_SOURCE
+    | MediaPlayerEntityFeature.SHUFFLE_SET
+    | MediaPlayerEntityFeature.VOLUME_SET
 )
 
 REPEAT_MODE_MAPPING_TO_HA = {
@@ -114,6 +107,8 @@ def spotify_exception_handler(func):
 class SpotifyMediaPlayer(MediaPlayerEntity):
     """Representation of a Spotify controller."""
 
+    _attr_entity_registry_enabled_default = False
+    _attr_has_entity_name = True
     _attr_icon = "mdi:spotify"
     _attr_media_content_type = MEDIA_TYPE_MUSIC
     _attr_media_image_remotely_accessible = False
@@ -128,7 +123,6 @@ class SpotifyMediaPlayer(MediaPlayerEntity):
         self._id = user_id
         self.data = data
 
-        self._attr_name = f"Spotify {name}"
         self._attr_unique_id = user_id
 
         if self.data.current_user["product"] == "premium":
@@ -367,7 +361,7 @@ class SpotifyMediaPlayer(MediaPlayerEntity):
             run_coroutine_threadsafe(
                 self.data.session.async_ensure_token_valid(), self.hass.loop
             ).result()
-            self.data.client = Spotify(auth=self.data.session.token["access_token"])
+            self.data.client.set_auth(auth=self.data.session.token["access_token"])
 
         current = self.data.client.current_playback()
         self._currently_playing = current or {}

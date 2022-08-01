@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 import yeelightsunflower
@@ -10,8 +11,7 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_HS_COLOR,
     PLATFORM_SCHEMA,
-    SUPPORT_BRIGHTNESS,
-    SUPPORT_COLOR,
+    ColorMode,
     LightEntity,
 )
 from homeassistant.const import CONF_HOST
@@ -22,8 +22,6 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.color as color_util
 
 _LOGGER = logging.getLogger(__name__)
-
-SUPPORT_YEELIGHT_SUNFLOWER = SUPPORT_BRIGHTNESS | SUPPORT_COLOR
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({vol.Required(CONF_HOST): cv.string})
 
@@ -47,6 +45,9 @@ def setup_platform(
 
 class SunflowerBulb(LightEntity):
     """Representation of a Yeelight Sunflower Light."""
+
+    _attr_color_mode = ColorMode.HS
+    _attr_supported_color_modes = {ColorMode.HS}
 
     def __init__(self, light):
         """Initialize a Yeelight Sunflower bulb."""
@@ -87,12 +88,7 @@ class SunflowerBulb(LightEntity):
         """Return the color property."""
         return color_util.color_RGB_to_hs(*self._rgb_color)
 
-    @property
-    def supported_features(self):
-        """Flag supported features."""
-        return SUPPORT_YEELIGHT_SUNFLOWER
-
-    def turn_on(self, **kwargs):
+    def turn_on(self, **kwargs: Any) -> None:
         """Instruct the light to turn on, optionally set colour/brightness."""
         # when no arguments, just turn light on (full brightness)
         if not kwargs:
@@ -109,11 +105,11 @@ class SunflowerBulb(LightEntity):
                 bright = int(kwargs[ATTR_BRIGHTNESS] / 255 * 100)
                 self._light.set_brightness(bright)
 
-    def turn_off(self, **kwargs):
+    def turn_off(self, **kwargs: Any) -> None:
         """Instruct the light to turn off."""
         self._light.turn_off()
 
-    def update(self):
+    def update(self) -> None:
         """Fetch new state data for this light and update local values."""
         self._light.update()
         self._available = self._light.available
